@@ -1,0 +1,345 @@
+name: Release Builds
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Linux (x86_64)
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/ladybirdbrowser/ladybird-ci:2026.10.16
+    env:
+      LADYBIRD_SOURCE_DIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: "%compiler% -v"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Check for Landlock
+        run: |
+          if ! python3 -c 'import ctypes, sys; sys.exit(0 if ctypes.CDLL(None, use_errno=True).syscall(444, None, 0, 1) > 0 else 1)'; then
+            echo "LADYBIRD_UNSAFE_ALLOW_MISSING_LANDLOCK=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set Up Environment
+        uses: ./.github/actions/setup
+        id: setup
+        with:
+          os: Linux
+          arch: x86_64
+          toolchain: Clang
+          build_preset: Release
+
+      - name: Restore Caches
+        uses: ./.github/actions/cache-restore
+        id: cache-restore
+        with:
+          os: Linux
+          arch: x86_64
+          toolchain: Clang
+          cache_key_extra: Release
+          ccache_path: ${{ steps.setup.outputs.ccache_path }}
+          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+
+      - name: Create Build Environment
+        run: |
+          cmake --preset Release -B Build \
+            -DENABLE_CI_BASELINE_CPU=ON \
+            -DBUILD_TESTING=OFF \
+            -DINCLUDE_WASM_SPEC_TESTS=OFF \
+            -DPython3_EXECUTABLE=${{ env.pythonLocation }}/bin/python \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build & Install
+        run: |
+          cmake --build Build --parallel 4
+          cmake --install Build --strip --prefix "${GITHUB_WORKSPACE}/Install"
+
+      - name: Package Linux Application
+        run: |
+          mkdir -p package/Ladybird
+          cp -r Install/* package/Ladybird/
+
+          cat << 'EOF' > package/Ladybird/Ladybird.sh
+          #!/bin/bash
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LD_LIBRARY_PATH="${DIR}/lib:${LD_LIBRARY_PATH}"
+          exec "${DIR}/bin/ladybird" "$@"
+          EOF
+          chmod +x package/Ladybird/Ladybird.sh
+          chmod +x package/Ladybird/bin/* package/Ladybird/libexec/* 2>/dev/null || true
+
+          tar -czvf ladybird-linux-x86_64.tar.gz -C package Ladybird
+
+      - name: Save Caches
+        if: always()
+        uses: ./.github/actions/cache-save
+        with:
+          arch: x86_64
+          ccache_path: ${{ steps.setup.outputs.ccache_path }}
+          ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
+          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+          vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ladybird-linux-x86_64
+          path: ladybird-linux-x86_64.tar.gz
+          retention-days: 1
+
+  build-macos:
+    name: macOS (Apple Silicon arm64)
+    runs-on: macos-26
+    env:
+      LADYBIRD_SOURCE_DIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: "%compiler% -v"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set Up Environment
+        uses: ./.github/actions/setup
+        id: setup
+        with:
+          os: macOS
+          arch: arm64
+          toolchain: Clang
+          build_preset: Release
+
+      - name: Restore Caches
+        uses: ./.github/actions/cache-restore
+        id: cache-restore
+        with:
+          os: macOS
+          arch: arm64
+          toolchain: Clang
+          cache_key_extra: Release
+          ccache_path: ${{ steps.setup.outputs.ccache_path }}
+          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+
+      - name: Create Build Environment
+        run: |
+          cmake --preset Release -B Build \
+            -DENABLE_CI_BASELINE_CPU=ON \
+            -DBUILD_TESTING=OFF \
+            -DINCLUDE_WASM_SPEC_TESTS=OFF \
+            -DPython3_EXECUTABLE=${{ env.pythonLocation }}/bin/python \
+            -DCMAKE_C_COMPILER=$(xcrun --find clang) \
+            -DCMAKE_CXX_COMPILER=$(xcrun --find clang++)
+
+      - name: Build & Install
+        run: |
+          cmake --build Build --parallel 4
+          cmake --install Build --strip --prefix "${GITHUB_WORKSPACE}/Install"
+
+      - name: Package macOS App Bundle
+        run: |
+          "${{ env.pythonLocation }}/bin/python" Meta/package-macos-app-bundle.py \
+            --build-dir Build \
+            --install-dir Install \
+            --output ladybird-macos-arm64.tar.gz
+
+      - name: Save Caches
+        if: always()
+        uses: ./.github/actions/cache-save
+        with:
+          arch: arm64
+          ccache_path: ${{ steps.setup.outputs.ccache_path }}
+          ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
+          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+          vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ladybird-macos-arm64
+          path: ladybird-macos-arm64.tar.gz
+          retention-days: 1
+
+  build-windows:
+    name: Windows (x86_64)
+    runs-on: windows-2025
+    env:
+      LADYBIRD_SOURCE_DIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: "%compiler% -v"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Prerequisites
+        shell: bash
+        run: |
+          choco install pkgconfiglite -y
+
+      - name: Set Up Environment
+        uses: ./.github/actions/setup
+        id: setup
+        with:
+          os: Windows
+          arch: x86_64
+          toolchain: ClangCL
+          build_preset: Release
+
+      - name: Restore Caches
+        uses: ./.github/actions/cache-restore
+        id: cache-restore
+        with:
+          os: Windows
+          arch: x86_64
+          toolchain: ClangCL
+          cache_key_extra: Release
+          ccache_path: ${{ steps.setup.outputs.ccache_path }}
+          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+
+      - name: Create Build Environment (Windows)
+        shell: pwsh
+        run: |
+          cmake --preset Release -B Build `
+            -DENABLE_CI_BASELINE_CPU=ON `
+            -DBUILD_TESTING=OFF `
+            -DINCLUDE_WASM_SPEC_TESTS=OFF
+
+      - name: Build & Install
+        shell: pwsh
+        run: |
+          cmake --build Build --parallel 4
+          cmake --install Build --prefix "${{ github.workspace }}/Install"
+
+      - name: Package Windows Application
+        shell: pwsh
+        run: |
+          if (Test-Path "Build\bin") {
+            Copy-Item -Path "Build\bin\*" -Destination "Install\bin" -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path "package"
+          Copy-Item -Path "Install" -Destination "package\Ladybird" -Recurse
+
+          # Create a friendly launcher script
+          Set-Content -Path "package\Ladybird\Ladybird.bat" -Value "@echo off`r`nstart """" ""%~dp0bin\Ladybird.exe"" %*"
+
+          Compress-Archive -Path "package\Ladybird" -DestinationPath "ladybird-windows-x86_64.zip" -Force
+
+      - name: Save Caches
+        if: always()
+        uses: ./.github/actions/cache-save
+        with:
+          arch: x86_64
+          ccache_path: ${{ steps.setup.outputs.ccache_path }}
+          ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
+          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+          vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ladybird-windows-x86_64
+          path: ladybird-windows-x86_64.zip
+          retention-days: 1
+
+  publish-release:
+    name: Publish Release
+    needs: [build-linux, build-macos, build-windows]
+    if: always() && (needs.build-linux.result == 'success' || needs.build-macos.result == 'success' || needs.build-windows.result == 'success')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Create release directory
+        run: mkdir -p release-assets
+
+      - name: Download Linux Artifact
+        if: needs.build-linux.result == 'success'
+        uses: actions/download-artifact@v7
+        with:
+          name: ladybird-linux-x86_64
+          path: release-assets/
+
+      - name: Download macOS Artifact
+        if: needs.build-macos.result == 'success'
+        uses: actions/download-artifact@v7
+        with:
+          name: ladybird-macos-arm64
+          path: release-assets/
+
+      - name: Download Windows Artifact
+        if: needs.build-windows.result == 'success'
+        uses: actions/download-artifact@v7
+        with:
+          name: ladybird-windows-x86_64
+          path: release-assets/
+
+      - name: Generate Release Metadata
+        id: meta
+        run: |
+          DATE=$(date -u +'%Y.%m.%d')
+          TIME=$(date -u +'%H%M')
+          SHORT_SHA=$(git rev-parse --short=8 HEAD)
+          TAG_NAME="release-${DATE}-${SHORT_SHA}"
+          RELEASE_TITLE="Ladybird Release ${DATE} (${SHORT_SHA})"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release_title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          RELEASE_TITLE: ${{ steps.meta.outputs.release_title }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+        run: |
+          COMMIT_SHA=$(git rev-parse HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+
+          cat << 'EOF' > release_notes.md
+          ## Ladybird Automated Release
+
+          EOF
+
+          echo "Built from upstream commit [\`${SHORT_SHA}\`](https://github.com/LadybirdBrowser/ladybird/commit/${COMMIT_SHA})" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Latest Commit Message" >> release_notes.md
+          echo '```' >> release_notes.md
+          echo "${COMMIT_MSG}" >> release_notes.md
+          echo '```' >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Available Platform Builds" >> release_notes.md
+
+          if [ -f release-assets/ladybird-linux-x86_64.tar.gz ]; then
+            echo "- **Linux (x86_64)**: \`ladybird-linux-x86_64.tar.gz\`" >> release_notes.md
+          fi
+          if [ -f release-assets/ladybird-macos-arm64.tar.gz ]; then
+            echo "- **macOS (Apple Silicon arm64)**: \`ladybird-macos-arm64.tar.gz\` (Self-contained \`Ladybird.app\` bundle)" >> release_notes.md
+          fi
+          if [ -f release-assets/ladybird-windows-x86_64.zip ]; then
+            echo "- **Windows (x86_64)**: \`ladybird-windows-x86_64.zip\`" >> release_notes.md
+          fi
+
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Release ${TAG_NAME} exists, updating assets..."
+            gh release upload "${TAG_NAME}" release-assets/* --clobber
+          else
+            echo "Creating release ${TAG_NAME}..."
+            gh release create "${TAG_NAME}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file release_notes.md \
+              --latest \
+              release-assets/*
+          fi
