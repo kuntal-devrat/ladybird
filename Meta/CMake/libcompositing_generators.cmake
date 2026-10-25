@@ -21,6 +21,8 @@ function (generate_compositing_webgl_implementation)
         dependencies "${LADYBIRD_SOURCE_DIR}/Meta/Generators/libweb_webgl.py"
     )
 
+    add_dependencies(generate_WebGLCommands.cpp generate_GLFunctions.cpp)
+
     set(WEBGL_GENERATED_HEADERS
        "WebGL/GLFunctions.h"
        "WebGL/WebGLCommands.h"

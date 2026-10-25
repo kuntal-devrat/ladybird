@@ -65,6 +65,7 @@ jobs:
 
       - name: Build & Install
         run: |
+          cmake --build Build --target ladybird_codegen_accumulator
           cmake --build Build --parallel 4
           cmake --install Build --strip --prefix "${GITHUB_WORKSPACE}/Install"
 
@@ -144,6 +145,7 @@ jobs:
 
       - name: Build & Install
         run: |
+          cmake --build Build --target ladybird_codegen_accumulator
           cmake --build Build --parallel 4
           cmake --install Build --strip --prefix "${GITHUB_WORKSPACE}/Install"
 
@@ -218,6 +220,7 @@ jobs:
       - name: Build & Install
         shell: pwsh
         run: |
+          cmake --build Build --target ladybird_codegen_accumulator
           cmake --build Build --parallel 4
           cmake --install Build --prefix "${{ github.workspace }}/Install"
 
