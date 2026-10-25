@@ -15,144 +15,33 @@ permissions:
 
 jobs:
   build-linux:
-    name: Linux (x86_64)
+    name: Linux Flatpak (x86_64)
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/ladybirdbrowser/ladybird-ci:2026.10.16
-    env:
-      LADYBIRD_SOURCE_DIR: ${{ github.workspace }}
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_COMPILERCHECK: "%compiler% -v"
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      options: --privileged
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
-      - name: Check for Landlock
+      - name: Make the baked-in Flatpak installation writable
         run: |
-          if ! python3 -c 'import ctypes, sys; sys.exit(0 if ctypes.CDLL(None, use_errno=True).syscall(444, None, 0, 1) > 0 else 1)'; then
-            echo "LADYBIRD_UNSAFE_ALLOW_MISSING_LANDLOCK=1" >> "$GITHUB_ENV"
-          fi
+          cp -a /var/lib/flatpak /var/lib/flatpak.rw
+          rm -rf /var/lib/flatpak
+          mv /var/lib/flatpak.rw /var/lib/flatpak
 
-      - name: Set Up Environment
-        uses: ./.github/actions/setup
-        id: setup
+      - name: Build Flatpak Bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          os: Linux
+          bundle: Ladybird-Linux-x86_64.flatpak
+          manifest-path: Meta/CMake/flatpak/org.ladybird.Ladybird.json
           arch: x86_64
-          toolchain: Clang
-          build_preset: Release
-
-      - name: Restore Caches
-        uses: ./.github/actions/cache-restore
-        id: cache-restore
-        with:
-          os: Linux
-          arch: x86_64
-          toolchain: Clang
-          cache_key_extra: Release
-          ccache_path: ${{ steps.setup.outputs.ccache_path }}
-          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
-
-      - name: Create Build Environment
-        run: |
-          cmake --preset Release -B Build \
-            -DENABLE_CI_BASELINE_CPU=ON \
-            -DBUILD_TESTING=OFF \
-            -DINCLUDE_WASM_SPEC_TESTS=OFF \
-            -DPython3_EXECUTABLE=${{ env.pythonLocation }}/bin/python \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++
-
-      - name: Build & Install
-        run: |
-          cmake --build Build --target ladybird_codegen_accumulator
-          cmake --build Build --parallel 4
-          cmake --install Build --strip --prefix "${GITHUB_WORKSPACE}/Install"
-
-      - name: Package Linux Application
-        run: |
-          mkdir -p package/Ladybird
-          cp -r Install/* package/Ladybird/
-
-          # Copy vcpkg dynamic libraries
-          if [ -d "${GITHUB_WORKSPACE}/Build/vcpkg_installed/x64-linux-dynamic/lib" ]; then
-            cp -d -r "${GITHUB_WORKSPACE}/Build/vcpkg_installed/x64-linux-dynamic/lib/"*.so* package/Ladybird/lib/ 2>/dev/null || true
-          fi
-
-          # Copy Qt6 libraries and plugins from container
-          cp -d -r /usr/lib/x86_64-linux-gnu/libQt6*.so* package/Ladybird/lib/ 2>/dev/null || true
-          cp -d -r /usr/lib/x86_64-linux-gnu/libcrypto.so.3* package/Ladybird/lib/ 2>/dev/null || true
-          cp -d -r /usr/lib/x86_64-linux-gnu/libssl.so.3* package/Ladybird/lib/ 2>/dev/null || true
-
-          mkdir -p package/Ladybird/plugins
-          if [ -d "/usr/lib/x86_64-linux-gnu/qt6/plugins" ]; then
-            cp -d -r /usr/lib/x86_64-linux-gnu/qt6/plugins/* package/Ladybird/plugins/ 2>/dev/null || true
-          fi
-
-          # Bundle all remaining required libraries via ldd
-          python3 - << 'PYEOF'
-          import os, subprocess, shutil
-
-          bins = []
-          for d in ["package/Ladybird/bin", "package/Ladybird/libexec"]:
-              if os.path.exists(d):
-                  for f in os.listdir(d):
-                      full = os.path.join(d, f)
-                      if os.path.isfile(full) and os.access(full, os.X_OK):
-                          bins.append(full)
-
-          copied = set()
-          for b in bins:
-              try:
-                  out = subprocess.check_output(["ldd", b], text=True, stderr=subprocess.DEVNULL)
-              except Exception:
-                  continue
-              for line in out.splitlines():
-                  if "=>" in line:
-                      parts = line.strip().split("=>")
-                      libname = parts[0].strip()
-                      path_part = parts[1].strip().split()[0]
-                      if os.path.isabs(path_part) and os.path.exists(path_part):
-                          if any(x in libname for x in ["libc.so", "libm.so", "libpthread.so", "libdl.so", "librt.so", "ld-linux"]):
-                              continue
-                          dst = os.path.join("package/Ladybird/lib", os.path.basename(path_part))
-                          if not os.path.exists(dst):
-                              try:
-                                  shutil.copy2(path_part, dst)
-                                  copied.add(os.path.basename(path_part))
-                              except Exception:
-                                  pass
-          print(f"Bundled {len(copied)} additional libraries into lib/")
-          PYEOF
-
-          # Create self-contained launcher script
-          cat << 'EOF' > package/Ladybird/Ladybird.sh
-          #!/bin/bash
-          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          export LD_LIBRARY_PATH="${DIR}/lib:${LD_LIBRARY_PATH}"
-          export QT_PLUGIN_PATH="${DIR}/plugins:${QT_PLUGIN_PATH}"
-          exec "${DIR}/bin/Ladybird" "$@"
-          EOF
-          chmod +x package/Ladybird/Ladybird.sh
-          chmod +x package/Ladybird/bin/* package/Ladybird/libexec/* 2>/dev/null || true
-
-          tar -czvf ladybird-linux-x86_64.tar.gz -C package Ladybird
-
-      - name: Save Caches
-        if: always()
-        uses: ./.github/actions/cache-save
-        with:
-          arch: x86_64
-          ccache_path: ${{ steps.setup.outputs.ccache_path }}
-          ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
-          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
-          vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v7
         with:
           name: ladybird-linux-x86_64
-          path: ladybird-linux-x86_64.tar.gz
+          path: Ladybird-Linux-x86_64.flatpak
           retention-days: 1
 
   build-macos:
@@ -378,8 +267,13 @@ jobs:
           echo "" >> release_notes.md
           echo "### Available Platform Builds" >> release_notes.md
 
+          if [ -f release-assets/Ladybird-Linux-x86_64.flatpak ]; then
+            echo "- **Linux (x86_64 Flatpak)**: \`Ladybird-Linux-x86_64.flatpak\` (Universal Flatpak bundle - works on Ubuntu 24.04/22.04, Fedora, Arch, Debian, etc.)" >> release_notes.md
+            echo "  - **Install:** \`flatpak install --user Ladybird-Linux-x86_64.flatpak\`" >> release_notes.md
+            echo "  - **Run:** \`flatpak run org.ladybird.Ladybird\`" >> release_notes.md
+          fi
           if [ -f release-assets/ladybird-linux-x86_64.tar.gz ]; then
-            echo "- **Linux (x86_64)**: \`ladybird-linux-x86_64.tar.gz\`" >> release_notes.md
+            echo "- **Linux (x86_64 Tarball)**: \`ladybird-linux-x86_64.tar.gz\`" >> release_notes.md
           fi
           if [ -f release-assets/ladybird-macos-arm64.tar.gz ]; then
             echo "- **macOS (Apple Silicon arm64)**: \`ladybird-macos-arm64.tar.gz\` (Self-contained \`Ladybird.app\` bundle)" >> release_notes.md
