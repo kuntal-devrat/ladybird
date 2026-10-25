@@ -6,6 +6,7 @@
 
 //! CSS selector parsing.
 
+use crate::css::ffi_support::OwnedBox;
 use std::sync::Arc;
 
 use super::css_tokenizer::{CssNumberType, ParserTokenKind, TokenizerInput, tokenize_for_parser};
@@ -1304,19 +1305,16 @@ pub(crate) unsafe fn selector_parse(
     .map_or(std::ptr::null_mut(), |selectors| Box::into_raw(Box::new(selectors)))
 }
 
-/// # Safety
-/// Input and the optional immutable namespace context must be readable for this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rust_selector_parse_with_namespace_context(
+pub extern "C" fn rust_selector_parse_with_namespace_context(
     input: FfiUtf16View,
-    namespaces: *const std::ffi::c_void,
+    namespaces: Option<&crate::css::rule::NativeNamespaceContext>,
     is_relative: bool,
     is_forgiving: bool,
 ) -> *mut RustParsedSelectorList {
     let Some(input) = input.units() else {
         return std::ptr::null_mut();
     };
-    let namespaces = unsafe { namespaces.cast::<crate::css::rule::NativeNamespaceContext>().as_ref() };
     let namespaces: Vec<_> = namespaces
         .into_iter()
         .flat_map(|namespaces| namespaces.prefixes.iter())
@@ -1416,15 +1414,9 @@ pub extern "C" fn rust_selector_parse_pseudo_element(input: FfiUtf16View) -> Ffi
     }
 }
 
-/// # Safety
-/// `list` must be null or an owned selector list that has not been destroyed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rust_parsed_selector_list_destroy(list: *mut RustParsedSelectorList) {
-    unsafe {
-        if !list.is_null() {
-            drop(Box::from_raw(list));
-        }
-    }
+pub extern "C" fn rust_parsed_selector_list_destroy(list: OwnedBox<RustParsedSelectorList>) {
+    drop(list);
 }
 
 #[unsafe(no_mangle)]

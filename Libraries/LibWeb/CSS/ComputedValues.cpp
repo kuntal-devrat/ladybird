@@ -15,7 +15,6 @@
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/AngleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BackgroundSizeStyleValue.h>
-#include <LibWeb/CSS/StyleValues/BorderImageSliceStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorSchemeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
@@ -23,7 +22,6 @@
 #include <LibWeb/CSS/StyleValues/CounterDefinitionsStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CursorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CustomIdentStyleValue.h>
-#include <LibWeb/CSS/StyleValues/EdgeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FilterStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FontStyleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FunctionStyleValue.h>
@@ -34,9 +32,7 @@
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
 #include <LibWeb/CSS/StyleValues/OpacityValueStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
-#include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
-#include <LibWeb/CSS/StyleValues/RepeatStyleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StringStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
@@ -294,8 +290,6 @@ ComputedStyleRecordView::ComputedStyleRecordView(StyleEngineFFI::FfiStyleRecordV
     m_values->m_depends_on_viewport_metrics = has_flag(dependency_flags, StyleRecordDependencyFlag::DependsOnViewportMetrics);
     m_values->m_font_metrics_depend_on_viewport_metrics = has_flag(dependency_flags, StyleRecordDependencyFlag::FontMetricsDependOnViewportMetrics);
     m_values->m_in_display_none_subtree = has_flag(dependency_flags, StyleRecordDependencyFlag::InDisplayNoneSubtree);
-    m_values->m_highlight_colors_authored = has_flag(dependency_flags, StyleRecordDependencyFlag::HighlightColorsAuthored);
-    m_values->m_highlight_color_is_current_color = has_flag(dependency_flags, StyleRecordDependencyFlag::HighlightColorIsCurrentColor);
     m_values->m_computed_longhand_table = view.longhand_table;
     if (m_values->m_computed_longhand_table)
         m_values->refresh_computed_longhand_table_views();
@@ -308,8 +302,6 @@ ComputedStyleRecordView::ComputedStyleRecordView(StyleEngineFFI::FfiStyleRecordV
         m_base_values->m_depends_on_viewport_metrics = m_values->m_depends_on_viewport_metrics;
         m_base_values->m_font_metrics_depend_on_viewport_metrics = m_values->m_font_metrics_depend_on_viewport_metrics;
         m_base_values->m_in_display_none_subtree = m_values->m_in_display_none_subtree;
-        m_base_values->m_highlight_colors_authored = m_values->m_highlight_colors_authored;
-        m_base_values->m_highlight_color_is_current_color = m_values->m_highlight_color_is_current_color;
         m_base_values->m_inheritance_dependent_specified_values = m_values->m_inheritance_dependent_specified_values;
         m_base_values->m_computed_longhand_table = m_values->m_computed_longhand_table;
         if (m_base_values->m_computed_longhand_table)
@@ -676,16 +668,6 @@ RustStyleValueHandle const* ComputedValues::stored_style_value_handle(PropertyID
     default:
         return nullptr;
     }
-}
-
-RefPtr<StyleValue const> ComputedValues::color_style_value() const
-{
-    if (m_inherited.text->color_style_value.pointer) {
-        auto handle = RustStyleValueHandle::retained(
-            static_cast<StyleValueFFI::StyleValueData const*>(m_inherited.text->color_style_value.pointer));
-        return style_value_from_handle(PropertyID::Color, handle);
-    }
-    return computed_style_value(PropertyID::Color);
 }
 
 RefPtr<StyleValue const> ComputedValues::background_color_style_value() const

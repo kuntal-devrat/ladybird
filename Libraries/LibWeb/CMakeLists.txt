@@ -247,8 +247,6 @@ set(SOURCES
     CSS/StyleValues/LengthStyleValue.cpp
     CSS/StyleValues/NumberStyleValue.cpp
     CSS/StyleValues/OpacityValueStyleValue.cpp
-    CSS/StyleValues/OpenTypeTaggedStyleValue.cpp
-    CSS/StyleValues/RatioStyleValue.cpp
     CSS/StyleValues/ShadowStyleValue.cpp
     CSS/StyleValues/ShorthandStyleValue.cpp
     CSS/StyleValues/StyleValue.cpp
@@ -420,7 +418,6 @@ set(SOURCES
     Geometry/DOMRectList.cpp
     Geometry/DOMRectReadOnly.cpp
     GPC/GlobalPrivacyControl.cpp
-    GraphemeEdgeTracker.cpp
     HighResolutionTime/Performance.cpp
     HighResolutionTime/TimeOrigin.cpp
     HTML/AbstractWorker.cpp
