@@ -74,11 +74,64 @@ jobs:
           mkdir -p package/Ladybird
           cp -r Install/* package/Ladybird/
 
+          # Copy vcpkg dynamic libraries
+          if [ -d "${GITHUB_WORKSPACE}/Build/vcpkg_installed/x64-linux-dynamic/lib" ]; then
+            cp -d -r "${GITHUB_WORKSPACE}/Build/vcpkg_installed/x64-linux-dynamic/lib/"*.so* package/Ladybird/lib/ 2>/dev/null || true
+          fi
+
+          # Copy Qt6 libraries and plugins from container
+          cp -d -r /usr/lib/x86_64-linux-gnu/libQt6*.so* package/Ladybird/lib/ 2>/dev/null || true
+          cp -d -r /usr/lib/x86_64-linux-gnu/libcrypto.so.3* package/Ladybird/lib/ 2>/dev/null || true
+          cp -d -r /usr/lib/x86_64-linux-gnu/libssl.so.3* package/Ladybird/lib/ 2>/dev/null || true
+
+          mkdir -p package/Ladybird/plugins
+          if [ -d "/usr/lib/x86_64-linux-gnu/qt6/plugins" ]; then
+            cp -d -r /usr/lib/x86_64-linux-gnu/qt6/plugins/* package/Ladybird/plugins/ 2>/dev/null || true
+          fi
+
+          # Bundle all remaining required libraries via ldd
+          python3 - << 'PYEOF'
+          import os, subprocess, shutil
+
+          bins = []
+          for d in ["package/Ladybird/bin", "package/Ladybird/libexec"]:
+              if os.path.exists(d):
+                  for f in os.listdir(d):
+                      full = os.path.join(d, f)
+                      if os.path.isfile(full) and os.access(full, os.X_OK):
+                          bins.append(full)
+
+          copied = set()
+          for b in bins:
+              try:
+                  out = subprocess.check_output(["ldd", b], text=True, stderr=subprocess.DEVNULL)
+              except Exception:
+                  continue
+              for line in out.splitlines():
+                  if "=>" in line:
+                      parts = line.strip().split("=>")
+                      libname = parts[0].strip()
+                      path_part = parts[1].strip().split()[0]
+                      if os.path.isabs(path_part) and os.path.exists(path_part):
+                          if any(x in libname for x in ["libc.so", "libm.so", "libpthread.so", "libdl.so", "librt.so", "ld-linux"]):
+                              continue
+                          dst = os.path.join("package/Ladybird/lib", os.path.basename(path_part))
+                          if not os.path.exists(dst):
+                              try:
+                                  shutil.copy2(path_part, dst)
+                                  copied.add(os.path.basename(path_part))
+                              except Exception:
+                                  pass
+          print(f"Bundled {len(copied)} additional libraries into lib/")
+          PYEOF
+
+          # Create self-contained launcher script
           cat << 'EOF' > package/Ladybird/Ladybird.sh
           #!/bin/bash
           DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           export LD_LIBRARY_PATH="${DIR}/lib:${LD_LIBRARY_PATH}"
-          exec "${DIR}/bin/ladybird" "$@"
+          export QT_PLUGIN_PATH="${DIR}/plugins:${QT_PLUGIN_PATH}"
+          exec "${DIR}/bin/Ladybird" "$@"
           EOF
           chmod +x package/Ladybird/Ladybird.sh
           chmod +x package/Ladybird/bin/* package/Ladybird/libexec/* 2>/dev/null || true
